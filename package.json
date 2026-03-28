@@ -1,7 +1,7 @@
 {
   "name": "sidecar-notes",
   "version": "1.0.0",
-  "description": "A sidecar note workflow for Obsidian with split view, synced quotes, and companion note files.",
+  "description": "A sidecar note workflow with split view, synced quotes, and companion note files.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit && node esbuild.config.mjs",
