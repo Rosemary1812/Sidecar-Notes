@@ -10,6 +10,12 @@ import { getNotesFilename } from "./utils";
 import { DedupeStore } from "./DedupeStore";
 import { Navigator } from "./Navigator";
 
+type EditorWithDom = Editor & {
+  cm?: { dom: HTMLElement };
+  cm6?: { dom: HTMLElement };
+  containerEl?: HTMLElement;
+};
+
 export class DualLinkManager {
   private app: App;
   private isActiveFlag = false;
@@ -62,28 +68,37 @@ export class DualLinkManager {
       return;
     }
 
-    const folderName = this.sourceFile.basename;
+    const sourceFile = this.sourceFile;
+    const notesFile = this.notesFile;
+    const folderName = sourceFile.basename;
     const parentPath =
-      this.sourceFile.parent.path === "/" ? "" : this.sourceFile.parent.path;
+      !sourceFile.parent || sourceFile.parent.path === "/" ? "" : sourceFile.parent.path;
     const folderPath = parentPath ? `${parentPath}/${folderName}` : `/${folderName}`;
 
     try {
       await this.app.vault.createFolder(folderPath);
-    } catch (_e: unknown) {
+    } catch {
       // Folder may already exist — ignore
     }
 
-    const newSourcePath = `${folderPath}/${this.sourceFile.name}`;
-    const newNotesPath = `${folderPath}/${this.notesFile.name}`;
+    const newSourcePath = `${folderPath}/${sourceFile.name}`;
+    const newNotesPath = `${folderPath}/${notesFile.name}`;
 
     try {
-      await this.app.fileManager.renameFile(this.sourceFile, newSourcePath);
-      await this.app.fileManager.renameFile(this.notesFile, newNotesPath);
+      await this.app.fileManager.renameFile(sourceFile, newSourcePath);
+      await this.app.fileManager.renameFile(notesFile, newNotesPath);
 
-      this.sourceFile =
-        this.app.vault.getAbstractFileByPath(newSourcePath) as TFile;
-      this.notesFile =
-        this.app.vault.getAbstractFileByPath(newNotesPath) as TFile;
+      const updatedSourceFile = this.app.vault.getAbstractFileByPath(newSourcePath);
+      const updatedNotesFile = this.app.vault.getAbstractFileByPath(newNotesPath);
+
+      if (!(updatedSourceFile instanceof TFile) || !(updatedNotesFile instanceof TFile)) {
+        new Notice("Failed to refresh file references after organizing.");
+        this.deactivate();
+        return;
+      }
+
+      this.sourceFile = updatedSourceFile;
+      this.notesFile = updatedNotesFile;
 
       new Notice(`Organized into ${folderName}/`);
     } catch (e: unknown) {
@@ -96,10 +111,8 @@ export class DualLinkManager {
 
   private getLeftEditor(): Editor | null {
     // Try CodeMirror 6 API first (newer Obsidian)
-    if (this.app.workspace.getActiveEditor) {
-      const ed = this.app.workspace.getActiveEditor();
-      if (ed?.editor) return ed.editor;
-    }
+    const activeEditor = this.app.workspace.activeEditor;
+    if (activeEditor?.editor) return activeEditor.editor;
 
     // Fall back to CodeMirror 5 API
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -109,11 +122,13 @@ export class DualLinkManager {
   }
 
   private getEditorDom(editor: Editor): HTMLElement | null {
+    const editorWithDom = editor as EditorWithDom;
+
     // CodeMirror 6: editor.cm6.dom or editor.cm?.dom
-    if ((editor as any).cm6) return (editor as any).cm6.dom;
-    if ((editor as any).cm?.dom) return (editor as any).cm.dom;
+    if (editorWithDom.cm6) return editorWithDom.cm6.dom;
+    if (editorWithDom.cm?.dom) return editorWithDom.cm.dom;
     // Fallback: try the editor element directly
-    return (editor as any).containerEl ?? null;
+    return editorWithDom.containerEl ?? null;
   }
 
   private async activate(): Promise<void> {
@@ -152,8 +167,8 @@ export class DualLinkManager {
 
       // ── 4. Get right editor ──
       // rightLeaf.view is a MarkdownView (both CM5 and CM6)
-      const rightView = this.rightLeaf.view as MarkdownView;
-      if (!rightView?.editor) {
+      const rightView = this.rightLeaf.view;
+      if (!(rightView instanceof MarkdownView) || !rightView.editor) {
         new Notice("Could not get right editor.");
         this.rightLeaf = null;
         return;
@@ -166,7 +181,7 @@ export class DualLinkManager {
 
       // ── 6. Initialize navigator ──
       this.navigator = new Navigator(
-        this.leftEditor,
+        leftEditor,
         this.rightEditor,
         () => this.notesContent
       );
@@ -199,16 +214,20 @@ export class DualLinkManager {
 
   private async ensureNotesFile(sourceFile: TFile): Promise<TFile> {
     const notesName = getNotesFilename(sourceFile.name);
-    const parentPath = sourceFile.parent.path === "/" ? "" : sourceFile.parent.path;
+    const parentPath =
+      !sourceFile.parent || sourceFile.parent.path === "/" ? "" : sourceFile.parent.path;
     const notesPath = parentPath ? `${parentPath}/${notesName}` : `/${notesName}`;
 
     const existing = this.app.vault.getAbstractFileByPath(notesPath);
-    if (existing && (existing as TFile).extension) {
-      return existing as TFile;
+    if (existing instanceof TFile) {
+      return existing;
+    }
+    if (existing) {
+      throw new Error(`Companion note path is not a file: ${notesPath}`);
     }
 
     const created = await this.app.vault.create(notesPath, "");
-    return created as TFile;
+    return created;
   }
 
   // ── Listeners ────────────────────────────────────────────────

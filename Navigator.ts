@@ -1,4 +1,4 @@
-import { Editor, EditorPosition } from "obsidian";
+import { Editor } from "obsidian";
 import { extractQuote } from "./utils";
 
 export class Navigator {
@@ -27,7 +27,7 @@ export class Navigator {
         this.rightEditor.setCursor({ line: i, ch: 0 });
         this.rightEditor.scrollIntoView(
           { from: { line: i, ch: 0 }, to: { line: i, ch: 0 } },
-          { y: "center" }
+          true
         );
         return;
       }
@@ -52,7 +52,7 @@ export class Navigator {
         this.leftEditor.setCursor({ line: i, ch: 0 });
         this.leftEditor.scrollIntoView(
           { from: { line: i, ch: 0 }, to: { line: i, ch: 0 } },
-          { y: "center" }
+          true
         );
         return;
       }
