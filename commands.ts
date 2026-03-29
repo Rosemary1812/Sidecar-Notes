@@ -7,7 +7,7 @@ export function registerCommands(
 ): { toggle: Command; organize: Command } {
   const toggle: Command = {
     id: "sidecar-notes-toggle",
-    name: "Sidecar Notes: toggle",
+    name: "Toggle sidecar notes",
     callback: () => {
       void manager.toggle();
     },
@@ -15,10 +15,10 @@ export function registerCommands(
 
   const organize: Command = {
     id: "sidecar-notes-organize",
-    name: "Sidecar Notes: organize into folder",
+    name: "Organize sidecar notes into folder",
     callback: async () => {
       if (!manager.isActive()) {
-        new Notice("Please activate Sidecar Notes first.");
+        new Notice("Please activate sidecar notes first.");
         return;
       }
       await manager.organize();

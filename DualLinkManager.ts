@@ -64,7 +64,7 @@ export class DualLinkManager {
 
   async organize(): Promise<void> {
     if (!this.isActiveFlag || !this.sourceFile || !this.notesFile) {
-      new Notice("Sidecar Notes is not active.");
+      new Notice("Sidecar notes are not active.");
       return;
     }
 
@@ -162,7 +162,7 @@ export class DualLinkManager {
       this.notesFile = await this.ensureNotesFile(activeFile);
 
       // ── 3. Split right and open notes file ──
-      this.rightLeaf = this.app.workspace.splitActiveLeaf("vertical");
+      this.rightLeaf = this.app.workspace.getLeaf(true);
       await this.rightLeaf.openFile(this.notesFile);
 
       // ── 4. Get right editor ──
@@ -190,7 +190,7 @@ export class DualLinkManager {
       this.registerListeners();
 
       this.isActiveFlag = true;
-      new Notice("Sidecar Notes activated.");
+      new Notice("Sidecar notes activated.");
     } finally {
       this.isActivatingFlag = false;
     }
