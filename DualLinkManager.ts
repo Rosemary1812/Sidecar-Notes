@@ -162,7 +162,7 @@ export class DualLinkManager {
       this.notesFile = await this.ensureNotesFile(activeFile);
 
       // ── 3. Split right and open notes file ──
-      this.rightLeaf = this.app.workspace.getLeaf(true);
+      this.rightLeaf = this.app.workspace.splitActiveLeaf('vertical');
       await this.rightLeaf.openFile(this.notesFile);
 
       // ── 4. Get right editor ──
@@ -278,19 +278,30 @@ export class DualLinkManager {
     const trimmed = selection.trim();
     if (!trimmed) return;
 
-    if (this.dedupeStore.has(trimmed) || this.pendingQuotes.has(trimmed)) return;
+    // Left side: wrap each line in ==...== so highlights work across lines
+    const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) return;
 
-    // Persistent highlight: wrap selection in ==...==
-    this.leftEditor.replaceSelection(`==${trimmed}==`);
+    const highlighted = lines.map(line => `==${line}==`).join('\n');
+    this.leftEditor.replaceSelection(highlighted);
 
-    // Append raw text (without == markers) to the notes file
-    void this.appendQuote(trimmed);
+    // Right side: append the entire selection as a single blockquote
+    if (!this.dedupeStore.has(trimmed) && !this.pendingQuotes.has(trimmed)) {
+      void this.appendQuote(trimmed);
+    }
   }
 
   private async appendQuote(quote: string): Promise<void> {
     if (!this.notesFile) return;
 
-    const normalized = `> ${quote}\n\n`;
+    // Format multi-line quotes as a single contiguous blockquote:
+    // > line 1
+    // > line 2
+    // > line 3
+    //
+    const quoteLines = quote.split('\n').map(l => `> ${l}`).join('\n');
+    const normalized = quoteLines + '\n\n';
+
     this.pendingQuotes.add(quote);
     try {
       await this.app.vault.process(this.notesFile, (content) => {
