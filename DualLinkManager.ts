@@ -162,7 +162,7 @@ export class DualLinkManager {
       this.notesFile = await this.ensureNotesFile(activeFile);
 
       // ── 3. Split right and open notes file ──
-      this.rightLeaf = this.app.workspace.splitActiveLeaf('vertical');
+      this.rightLeaf = this.app.workspace.getLeaf(true);
       await this.rightLeaf.openFile(this.notesFile);
 
       // ── 4. Get right editor ──
