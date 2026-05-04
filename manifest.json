@@ -1,7 +1,7 @@
 {
   "id": "sidecar-notes",
   "name": "Sidecar Notes",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "minAppVersion": "1.0.0",
   "description": "A sidecar note workflow with split view, synced quotes, and companion note files.",
   "author": "Rosemary1812",
