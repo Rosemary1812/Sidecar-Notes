@@ -1,49 +1,33 @@
 import { Plugin, TFile } from "obsidian";
-import { DualLinkManager } from "./DualLinkManager";
+import { DualLinkManager, normalizePluginData } from "./DualLinkManager";
+import { SidecarSettingTab } from "./SidecarSettingTab";
+import { SIDECAR_VIEW_TYPE, SidecarView } from "./SidecarView";
 import { registerCommands } from "./commands";
-import { getNotesFilename, isCompanionNotesFile } from "./utils";
+import type { SidecarPluginData } from "./settings";
 
 export default class DualLinkPlugin extends Plugin {
-  private manager: DualLinkManager | null = null;
+  manager: DualLinkManager | null = null;
+  private data: SidecarPluginData | null = null;
 
-  onload(): void {
-    this.manager = new DualLinkManager(this.app);
+  async onload(): Promise<void> {
+    this.data = normalizePluginData(await this.loadData());
+    this.manager = new DualLinkManager(this.app, this.data, async (data) => {
+      this.data = data;
+      await this.saveData(data);
+    });
 
-    // Register commands
+    this.registerView(SIDECAR_VIEW_TYPE, (leaf) => new SidecarView(leaf));
     registerCommands(this, this.manager);
 
-    // Ribbon icon — "columns" is a valid Obsidian SVG icon
-    this.addRibbonIcon("columns", "Toggle sidecar notes", () => {
+    this.addRibbonIcon("quote", "Toggle sidecar workbench", () => {
       void this.manager?.toggle();
     });
 
-    // Auto-activation: when a file is opened (via file-open event, not activeLeafChange),
-    // check if it has a paired notes file and auto-activate dual link mode.
+    this.addSettingTab(new SidecarSettingTab(this.app, this));
+
     this.registerEvent(
       this.app.workspace.on("file-open", (openedFile: TFile | null) => {
-        void (async () => {
-          if (!this.manager || !openedFile) return;
-
-          // Only auto-activate if not already active and not already in-flight
-          if (this.manager.isActive() || this.manager.isActivating()) return;
-
-          // Never auto-activate when the opened file is already the companion notes file
-          if (isCompanionNotesFile(openedFile.name)) return;
-
-          // Check if the paired notes file exists
-          const notesName = getNotesFilename(openedFile.name);
-          const parentPath =
-            !openedFile.parent || openedFile.parent.path === "/" ? "" : openedFile.parent.path;
-          const notesPath = parentPath ? `${parentPath}/${notesName}` : `/${notesName}`;
-          const pairedFile = this.app.vault.getAbstractFileByPath(notesPath);
-
-          if (pairedFile instanceof TFile) {
-            // Paired notes file found — auto activate
-            await this.manager.toggle();
-          }
-        })().catch((error: unknown) => {
-          console.error("[Sidecar Notes] Failed to auto-activate", error);
-        });
+        void this.handleFileOpen(openedFile);
       })
     );
   }
@@ -51,5 +35,19 @@ export default class DualLinkPlugin extends Plugin {
   onunload(): void {
     this.manager?.deactivate();
     this.manager = null;
+    this.data = null;
+  }
+
+  private async handleFileOpen(openedFile: TFile | null): Promise<void> {
+    if (!this.manager || !openedFile) return;
+    if (openedFile.extension !== "md") return;
+    if (!this.manager.getSettings().autoOpenSidecar) return;
+    if (this.manager.isActive() || this.manager.isActivating()) return;
+
+    try {
+      await this.manager.activateForCurrentFile();
+    } catch (error) {
+      console.error("[Sidecar Notes] Failed to auto-open workbench", error);
+    }
   }
 }
