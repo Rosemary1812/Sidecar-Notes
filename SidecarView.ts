@@ -97,16 +97,18 @@ export class SidecarView extends ItemView {
     this.updateEmptyState();
   }
 
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
     this.render();
+    return Promise.resolve();
   }
 
-  async onClose(): Promise<void> {
+  onClose(): Promise<void> {
     this.controller?.handleWorkbenchClosed();
     this.entryEls.clear();
     this.editingQuotes.clear();
     this.editingNotes.clear();
     this.expandedQuotes.clear();
+    return Promise.resolve();
   }
 
   private render(): void {
