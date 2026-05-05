@@ -65,6 +65,19 @@ export class SidecarSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Summary font size")
+      .setDesc("Font size used for excerpt and note previews in the right-side workbench.")
+      .addSlider((slider) => {
+        slider
+          .setLimits(12, 20, 1)
+          .setValue(settings.summaryFontSize)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            await this.plugin.manager?.updateSettings({ summaryFontSize: value });
+          });
+      });
+
+    new Setting(containerEl)
       .setName("Export excerpt format")
       .setDesc("Markdown style used for excerpts in exported notes.")
       .addDropdown((dropdown) => {

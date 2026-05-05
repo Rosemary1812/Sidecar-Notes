@@ -30,6 +30,14 @@ export default class DualLinkPlugin extends Plugin {
         void this.handleFileOpen(openedFile);
       })
     );
+
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (file instanceof TFile) {
+          this.manager?.handleSourceFileModified(file);
+        }
+      })
+    );
   }
 
   onunload(): void {
@@ -42,6 +50,7 @@ export default class DualLinkPlugin extends Plugin {
     if (!this.manager || !openedFile) return;
     if (openedFile.extension !== "md") return;
     if (!this.manager.getSettings().autoOpenSidecar) return;
+    if (this.manager.isAutoOpenSuspended()) return;
     if (this.manager.isActive() || this.manager.isActivating()) return;
 
     try {

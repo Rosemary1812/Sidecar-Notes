@@ -20,6 +20,7 @@ export interface SidecarSettings {
   autoOpenSidecar: boolean;
   autoSaveSummaryFile: boolean;
   addBidirectionalLinks: boolean;
+  summaryFontSize: number;
   exportFormat: ExportFormat;
   exportCalloutType: CalloutType;
   exportFolder: string;
@@ -31,6 +32,7 @@ export interface ExcerptEntry {
   quote: string;
   note: string;
   noteOpen: boolean;
+  sourceFormat?: LeftExcerptFormat;
 }
 
 export interface WorkbenchData {
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: SidecarSettings = {
   autoOpenSidecar: true,
   autoSaveSummaryFile: true,
   addBidirectionalLinks: false,
+  summaryFontSize: 14,
   exportFormat: "quote",
   exportCalloutType: "quote",
   exportFolder: "Sidecar Exports",

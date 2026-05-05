@@ -2,6 +2,7 @@
   --sidecar-radius: 10px;
   --sidecar-radius-sm: 7px;
   --sidecar-fast: 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  --sidecar-preview-font-size: var(--font-text-size);
   background: var(--background-secondary);
   display: flex;
   flex-direction: column;
@@ -193,7 +194,7 @@
 
 .sidecar-entry__preview {
   color: var(--text-normal);
-  font-size: var(--font-text-size);
+  font-size: var(--sidecar-preview-font-size);
   line-height: 1.52;
   overflow-wrap: anywhere;
 }

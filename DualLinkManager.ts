@@ -5,6 +5,7 @@ import {
   CalloutType,
   ExcerptEntry,
   ExportFormat,
+  LeftExcerptFormat,
   SidecarPluginData,
   SidecarSettings,
   WorkbenchData,
@@ -33,7 +34,10 @@ export class DualLinkManager implements SidecarViewController {
   private pendingQuotes = new Set<string>();
   private saveTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private syncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private reconcileTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private excerptMode = true;
+  private isClosingLeaf = false;
+  private autoOpenSuspended = false;
 
   private onBoundMouseUp = () => this.syncSelection();
   private onBoundKeyUp = () => this.syncSelection();
@@ -61,6 +65,7 @@ export class DualLinkManager implements SidecarViewController {
       ...this.data.settings,
       ...patch,
     };
+    this.view?.applySettings(this.data.settings);
     await this.saveNow();
     if (this.sourceFile && this.data.settings.autoSaveSummaryFile) {
       await this.syncSummaryFile();
@@ -69,8 +74,9 @@ export class DualLinkManager implements SidecarViewController {
 
   async toggle(): Promise<void> {
     if (this.isActiveFlag) {
-      this.deactivate();
+      this.deactivate({ closeLeaf: true, suspendAutoOpen: true });
     } else {
+      this.autoOpenSuspended = false;
       await this.activate();
     }
   }
@@ -91,6 +97,18 @@ export class DualLinkManager implements SidecarViewController {
   setExcerptMode(enabled: boolean): void {
     this.excerptMode = enabled;
     this.view?.updateExcerptMode(enabled);
+  }
+
+  handleWorkbenchClosed(): void {
+    if (this.isClosingLeaf) {
+      this.isClosingLeaf = false;
+      return;
+    }
+    this.deactivate({ suspendAutoOpen: true });
+  }
+
+  isAutoOpenSuspended(): boolean {
+    return this.autoOpenSuspended;
   }
 
   addNoteEntry(): void {
@@ -126,14 +144,34 @@ export class DualLinkManager implements SidecarViewController {
     this.queueSave();
   }
 
-  deleteEntry(id: string): void {
+  async deleteEntry(id: string): Promise<void> {
     const workbench = this.getCurrentWorkbench();
     if (!workbench) return;
 
-    workbench.entries = workbench.entries.filter((entry) => entry.id !== id);
+    const entry = workbench.entries.find((item) => item.id === id);
+    if (!entry) return;
+
+    if (entry.kind === "excerpt") {
+      await this.revertExcerptMarkupInSource(entry);
+    }
+
+    workbench.entries = workbench.entries.filter((item) => item.id !== id);
     this.pendingQuotes.delete(id);
     this.view?.removeEntry(id);
     this.queueSave();
+  }
+
+  handleSourceFileModified(file: TFile): void {
+    if (!this.sourceFile || file.path !== this.sourceFile.path) return;
+
+    if (this.reconcileTimer !== null) {
+      globalThis.clearTimeout(this.reconcileTimer);
+    }
+
+    this.reconcileTimer = globalThis.setTimeout(() => {
+      this.reconcileTimer = null;
+      void this.reconcileWorkbenchWithSource();
+    }, 250);
   }
 
   async exportMarkdown(): Promise<void> {
@@ -152,16 +190,25 @@ export class DualLinkManager implements SidecarViewController {
     new Notice(`Synced sidecar notes to ${path}`);
   }
 
-  deactivate(): void {
+  deactivate(options: { closeLeaf?: boolean; suspendAutoOpen?: boolean } = {}): void {
+    const leafToClose = options.closeLeaf ? this.rightLeaf : null;
     this.unregisterListeners();
     this.flushQueuedSave();
     this.flushQueuedSync();
+    this.flushQueuedReconcile();
     this.isActiveFlag = false;
     this.sourceFile = null;
     this.rightLeaf = null;
     this.view = null;
     this.leftEditor = null;
     this.pendingQuotes.clear();
+    if (options.suspendAutoOpen) {
+      this.autoOpenSuspended = true;
+    }
+    if (leafToClose) {
+      this.isClosingLeaf = true;
+      leafToClose.detach();
+    }
   }
 
   private async activate(): Promise<void> {
@@ -196,7 +243,12 @@ export class DualLinkManager implements SidecarViewController {
 
       this.view = view;
       this.view.setController(this);
-      this.view.setWorkbench(workbench, this.getWorkbenchTitle(), this.excerptMode);
+      this.view.setWorkbench(
+        workbench,
+        this.getWorkbenchTitle(),
+        this.excerptMode,
+        this.data.settings
+      );
       this.registerListeners();
       this.isActiveFlag = true;
       this.queueSummarySync();
@@ -282,6 +334,10 @@ export class DualLinkManager implements SidecarViewController {
   }
 
   private formatSelection(selection: string): string {
+    return this.applySourceFormat(selection, this.data.settings.leftExcerptFormat);
+  }
+
+  private applySourceFormat(selection: string, format: LeftExcerptFormat): string {
     const lines = selection
       .split("\n")
       .map((line) => line.trim())
@@ -289,7 +345,7 @@ export class DualLinkManager implements SidecarViewController {
 
     if (lines.length === 0) return selection;
 
-    switch (this.data.settings.leftExcerptFormat) {
+    switch (format) {
       case "bold":
         return lines.map((line) => `**${line}**`).join("\n");
       case "italic":
@@ -329,6 +385,7 @@ export class DualLinkManager implements SidecarViewController {
       quote,
       note: "",
       noteOpen: kind === "note",
+      sourceFormat: kind === "excerpt" ? this.data.settings.leftExcerptFormat : undefined,
     };
   }
 
@@ -374,6 +431,12 @@ export class DualLinkManager implements SidecarViewController {
     globalThis.clearTimeout(this.syncTimer);
     this.syncTimer = null;
     void this.syncSummaryFile();
+  }
+
+  private flushQueuedReconcile(): void {
+    if (this.reconcileTimer === null) return;
+    globalThis.clearTimeout(this.reconcileTimer);
+    this.reconcileTimer = null;
   }
 
   private renderExport(workbench: WorkbenchData): string {
@@ -423,8 +486,7 @@ export class DualLinkManager implements SidecarViewController {
     const sourceLink = this.data.settings.addBidirectionalLinks
       ? `Source: ${this.wikilinkForFile(sourceFile.path, sourceFile.basename)}\n\n`
       : "";
-    const title = `# ${summaryPath.replace(/\.md$/i, "").split("/").pop() ?? sourceFile.basename}`;
-    return `${title}\n\n${sourceLink}${body ? `${body}\n` : ""}`;
+    return `${sourceLink}${body ? `${body}\n` : ""}`;
   }
 
   private async ensureSummaryPath(workbench: WorkbenchData, sourceFile: TFile): Promise<string> {
@@ -502,6 +564,64 @@ export class DualLinkManager implements SidecarViewController {
   private stripMdExtension(path: string): string {
     return path.replace(/\.md$/i, "");
   }
+
+  private async revertExcerptMarkupInSource(entry: ExcerptEntry): Promise<void> {
+    if (!this.sourceFile || entry.kind !== "excerpt") return;
+
+    await this.app.vault.process(this.sourceFile, (content) => {
+      const formattedQuote = this.findSourceExcerptVariant(content, entry);
+      if (!formattedQuote || formattedQuote === entry.quote) return content;
+
+      const index = content.indexOf(formattedQuote);
+      if (index === -1) return content;
+      return `${content.slice(0, index)}${entry.quote}${content.slice(index + formattedQuote.length)}`;
+    });
+  }
+
+  private async reconcileWorkbenchWithSource(): Promise<void> {
+    if (!this.sourceFile) return;
+
+    const workbench = this.getCurrentWorkbench();
+    if (!workbench) return;
+
+    const sourceContent = await this.app.vault.cachedRead(this.sourceFile);
+    const removedEntries = workbench.entries.filter((entry) => {
+      if (entry.kind !== "excerpt") return false;
+      return !this.sourceContainsExcerpt(sourceContent, entry);
+    });
+    if (removedEntries.length === 0) return;
+
+    const removedIds = new Set(removedEntries.map((entry) => entry.id));
+    workbench.entries = workbench.entries.filter((entry) => !removedIds.has(entry.id));
+
+    for (const entry of removedEntries) {
+      this.view?.removeEntry(entry.id);
+    }
+
+    this.queueSave();
+  }
+
+  private sourceContainsExcerpt(sourceContent: string, entry: ExcerptEntry): boolean {
+    return this.findSourceExcerptVariant(sourceContent, entry) !== null;
+  }
+
+  private findSourceExcerptVariant(sourceContent: string, entry: ExcerptEntry): string | null {
+    const formats: LeftExcerptFormat[] = ["highlight", "bold", "italic", "none"];
+    const preferred = entry.sourceFormat;
+    const candidates = preferred
+      ? [preferred, ...formats.filter((format) => format !== preferred)]
+      : formats;
+
+    for (const format of candidates) {
+      const variant = this.applySourceFormat(entry.quote, format);
+      if (sourceContent.includes(variant)) {
+        entry.sourceFormat = format;
+        return variant;
+      }
+    }
+
+    return null;
+  }
 }
 
 export function normalizePluginData(raw: unknown): SidecarPluginData {
@@ -510,6 +630,7 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
     ...DEFAULT_SETTINGS,
     ...(data?.settings ?? {}),
   };
+  settings.summaryFontSize = normalizeSummaryFontSize(settings.summaryFontSize);
   if (!isCalloutType(settings.exportCalloutType)) {
     settings.exportCalloutType = DEFAULT_SETTINGS.exportCalloutType;
   }
@@ -519,6 +640,7 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
     for (const entry of workbench.entries) {
       entry.kind = entry.kind ?? (entry.quote.trim() ? "excerpt" : "note");
       entry.noteOpen = entry.noteOpen ?? entry.kind === "note";
+      entry.sourceFormat = entry.kind === "excerpt" ? entry.sourceFormat : undefined;
     }
   }
 
@@ -546,4 +668,12 @@ function isCalloutType(value: unknown): value is CalloutType {
     "bug",
     "example",
   ].includes(value);
+}
+
+function normalizeSummaryFontSize(value: unknown): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return DEFAULT_SETTINGS.summaryFontSize;
+  }
+
+  return Math.min(20, Math.max(12, Math.round(value)));
 }

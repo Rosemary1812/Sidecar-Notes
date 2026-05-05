@@ -1,5 +1,5 @@
 import { ItemView, MarkdownRenderer, WorkspaceLeaf, setIcon } from "obsidian";
-import type { ExcerptEntry, WorkbenchData } from "./settings";
+import type { ExcerptEntry, SidecarSettings, WorkbenchData } from "./settings";
 
 export const SIDECAR_VIEW_TYPE = "sidecar-excerpt-workbench";
 
@@ -7,8 +7,9 @@ export interface SidecarViewController {
   addNoteEntry(): void;
   exportMarkdown(): Promise<void>;
   updateEntry(id: string, patch: Partial<Pick<ExcerptEntry, "quote" | "note">>): void;
-  deleteEntry(id: string): void;
+  deleteEntry(id: string): Promise<void>;
   deleteNote(id: string): void;
+  handleWorkbenchClosed(): void;
   setExcerptMode(enabled: boolean): void;
 }
 
@@ -21,6 +22,7 @@ interface EntryElements {
 export class SidecarView extends ItemView {
   private controller: SidecarViewController | null = null;
   private workbench: WorkbenchData = { entries: [] };
+  private settings: SidecarSettings | null = null;
   private title = "Sidecar Notes";
   private excerptMode = true;
   private listEl: HTMLElement | null = null;
@@ -51,11 +53,22 @@ export class SidecarView extends ItemView {
     this.controller = controller;
   }
 
-  setWorkbench(workbench: WorkbenchData, title: string, excerptMode: boolean): void {
+  setWorkbench(
+    workbench: WorkbenchData,
+    title: string,
+    excerptMode: boolean,
+    settings: SidecarSettings
+  ): void {
     this.workbench = workbench;
     this.title = title;
     this.excerptMode = excerptMode;
+    this.settings = settings;
     this.render();
+  }
+
+  applySettings(settings: SidecarSettings): void {
+    this.settings = settings;
+    this.contentEl.style.setProperty("--sidecar-preview-font-size", `${settings.summaryFontSize}px`);
   }
 
   addEntry(entry: ExcerptEntry): void {
@@ -89,6 +102,7 @@ export class SidecarView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.controller?.handleWorkbenchClosed();
     this.entryEls.clear();
     this.editingQuotes.clear();
     this.editingNotes.clear();
@@ -99,6 +113,9 @@ export class SidecarView extends ItemView {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("sidecar-workbench");
+    if (this.settings) {
+      this.applySettings(this.settings);
+    }
 
     const headerEl = contentEl.createDiv({ cls: "sidecar-workbench__header" });
     const titleGroup = headerEl.createDiv({ cls: "sidecar-workbench__title-group" });
@@ -217,7 +234,7 @@ export class SidecarView extends ItemView {
     });
     const deleteButton = this.createIconButton(actions, "trash-2", "Delete excerpt");
     deleteButton.addEventListener("click", () => {
-      this.controller?.deleteEntry(entry.id);
+      void this.controller?.deleteEntry(entry.id);
     });
 
     const isLongQuote = this.isLongQuote(entry.quote);
@@ -342,7 +359,7 @@ export class SidecarView extends ItemView {
       }).addEventListener("click", () => {
         this.editingNotes.delete(entry.id);
         if (!entry.note.trim()) {
-          this.controller?.deleteEntry(entry.id);
+          void this.controller?.deleteEntry(entry.id);
         } else {
           this.renderEntryList();
         }
@@ -355,7 +372,7 @@ export class SidecarView extends ItemView {
       });
       const deleteButton = this.createIconButton(actions, "trash-2", "Delete note");
       deleteButton.addEventListener("click", () => {
-        this.controller?.deleteEntry(entry.id);
+        void this.controller?.deleteEntry(entry.id);
       });
 
       const preview = section.createDiv({ cls: "sidecar-entry__preview" });
