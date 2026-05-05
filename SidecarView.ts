@@ -214,8 +214,7 @@ export class SidecarView extends ItemView {
         cls: "sidecar-editor-button sidecar-editor-button--primary",
         text: "Save",
       }).addEventListener("click", () => {
-        entry.quote = textarea.value;
-        this.controller?.updateEntry(entry.id, { quote: entry.quote });
+        void this.controller?.updateEntry(entry.id, { quote: textarea.value });
         this.editingQuotes.delete(entry.id);
         this.renderEntryList();
       });
@@ -292,9 +291,8 @@ export class SidecarView extends ItemView {
         cls: "sidecar-editor-button sidecar-editor-button--primary",
         text: "Save",
       }).addEventListener("click", () => {
-        entry.note = textarea.value;
         entry.noteOpen = false;
-        this.controller?.updateEntry(entry.id, { note: entry.note });
+        void this.controller?.updateEntry(entry.id, { note: textarea.value });
         this.editingNotes.delete(entry.id);
         this.renderEntryList();
       });
@@ -350,8 +348,7 @@ export class SidecarView extends ItemView {
         cls: "sidecar-editor-button sidecar-editor-button--primary",
         text: "Save",
       }).addEventListener("click", () => {
-        entry.note = noteTextarea?.value ?? "";
-        this.controller?.updateEntry(entry.id, { note: entry.note });
+        void this.controller?.updateEntry(entry.id, { note: noteTextarea?.value ?? "" });
         this.editingNotes.delete(entry.id);
         this.renderEntryList();
       });

@@ -31,13 +31,15 @@ export class DualLinkManager implements SidecarViewController {
   private rightLeaf: WorkspaceLeaf | null = null;
   private view: SidecarView | null = null;
   private leftEditor: Editor | null = null;
-  private pendingQuotes = new Set<string>();
   private saveTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private syncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private excerptMode = true;
   private isClosingLeaf = false;
   private autoOpenSuspended = false;
+  private lastCaptureKey: string | null = null;
+  private lastCaptureAt = 0;
+  private sourceMutationQueue: Promise<void> = Promise.resolve();
 
   private onBoundMouseUp = () => this.syncSelection();
   private onBoundKeyUp = () => this.syncSelection();
@@ -130,7 +132,17 @@ export class DualLinkManager implements SidecarViewController {
     const entry = workbench?.entries.find((item) => item.id === id);
     if (!entry) return;
 
-    Object.assign(entry, patch);
+    if (typeof patch.quote === "string") {
+      const nextQuote = patch.quote.trim();
+      if (nextQuote) {
+        entry.quote = nextQuote;
+      }
+    }
+
+    if (typeof patch.note === "string") {
+      entry.note = patch.note;
+    }
+
     this.queueSave();
   }
 
@@ -152,11 +164,14 @@ export class DualLinkManager implements SidecarViewController {
     if (!entry) return;
 
     if (entry.kind === "excerpt") {
-      await this.revertExcerptMarkupInSource(entry);
+      const reverted = await this.revertExcerptMarkupInSource(entry);
+      if (!reverted) {
+        new Notice("Could not remove the source highlight for this excerpt.");
+        return;
+      }
     }
 
     workbench.entries = workbench.entries.filter((item) => item.id !== id);
-    this.pendingQuotes.delete(id);
     this.view?.removeEntry(id);
     this.queueSave();
   }
@@ -201,7 +216,8 @@ export class DualLinkManager implements SidecarViewController {
     this.rightLeaf = null;
     this.view = null;
     this.leftEditor = null;
-    this.pendingQuotes.clear();
+    this.lastCaptureKey = null;
+    this.lastCaptureAt = 0;
     if (options.suspendAutoOpen) {
       this.autoOpenSuspended = true;
     }
@@ -309,32 +325,38 @@ export class DualLinkManager implements SidecarViewController {
     const trimmed = selection.trim();
     if (!trimmed) return;
 
+    const workbench = this.getCurrentWorkbench();
+    if (!workbench) return;
+    if (!this.shouldCaptureSelection(trimmed)) return;
+
+    const entry = this.createEntry(trimmed, "excerpt");
+    workbench.entries.push(entry);
+    this.view?.addEntry(entry);
+    this.queueSave();
+    this.markSelectionCaptured(trimmed);
+
     const formatted = this.formatSelection(trimmed);
     if (formatted !== selection) {
       this.leftEditor.replaceSelection(formatted);
     }
-
-    this.addExcerptFromSelection(trimmed);
-  }
-
-  private addExcerptFromSelection(quote: string): void {
-    const workbench = this.getCurrentWorkbench();
-    if (!workbench) return;
-
-    const normalized = quote.trim();
-    if (!normalized || this.pendingQuotes.has(normalized)) return;
-    if (workbench.entries.some((entry) => entry.quote.trim() === normalized)) return;
-
-    this.pendingQuotes.add(normalized);
-    const entry = this.createEntry(normalized, "excerpt");
-    workbench.entries.push(entry);
-    this.view?.addEntry(entry);
-    this.queueSave();
-    this.pendingQuotes.delete(normalized);
   }
 
   private formatSelection(selection: string): string {
     return this.applySourceFormat(selection, this.data.settings.leftExcerptFormat);
+  }
+
+  private shouldCaptureSelection(selection: string): boolean {
+    if (!this.sourceFile) return false;
+
+    const key = `${this.sourceFile.path}::${selection.trim()}`;
+    return !(this.lastCaptureKey === key && Date.now() - this.lastCaptureAt < 250);
+  }
+
+  private markSelectionCaptured(selection: string): void {
+    if (!this.sourceFile) return;
+
+    this.lastCaptureKey = `${this.sourceFile.path}::${selection.trim()}`;
+    this.lastCaptureAt = Date.now();
   }
 
   private applySourceFormat(selection: string, format: LeftExcerptFormat): string {
@@ -383,6 +405,7 @@ export class DualLinkManager implements SidecarViewController {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       kind,
       quote,
+      sourceQuote: kind === "excerpt" ? quote : undefined,
       note: "",
       noteOpen: kind === "note",
       sourceFormat: kind === "excerpt" ? this.data.settings.leftExcerptFormat : undefined,
@@ -565,16 +588,28 @@ export class DualLinkManager implements SidecarViewController {
     return path.replace(/\.md$/i, "");
   }
 
-  private async revertExcerptMarkupInSource(entry: ExcerptEntry): Promise<void> {
-    if (!this.sourceFile || entry.kind !== "excerpt") return;
+  private async revertExcerptMarkupInSource(entry: ExcerptEntry): Promise<boolean> {
+    if (!this.sourceFile || entry.kind !== "excerpt") return false;
 
-    await this.app.vault.process(this.sourceFile, (content) => {
-      const formattedQuote = this.findSourceExcerptVariant(content, entry);
-      if (!formattedQuote || formattedQuote === entry.quote) return content;
+    return this.runSourceMutation(async () => {
+      let reverted = false;
 
-      const index = content.indexOf(formattedQuote);
-      if (index === -1) return content;
-      return `${content.slice(0, index)}${entry.quote}${content.slice(index + formattedQuote.length)}`;
+      await this.app.vault.process(this.sourceFile as TFile, (content) => {
+        const formattedQuote = this.findSourceExcerptVariant(content, entry);
+        const sourceQuote = entry.sourceQuote ?? entry.quote;
+        if (!formattedQuote || formattedQuote === sourceQuote) {
+          reverted = formattedQuote === sourceQuote;
+          return content;
+        }
+
+        const index = content.indexOf(formattedQuote);
+        if (index === -1) return content;
+
+        reverted = true;
+        return `${content.slice(0, index)}${sourceQuote}${content.slice(index + formattedQuote.length)}`;
+      });
+
+      return reverted;
     });
   }
 
@@ -606,21 +641,46 @@ export class DualLinkManager implements SidecarViewController {
   }
 
   private findSourceExcerptVariant(sourceContent: string, entry: ExcerptEntry): string | null {
+    const match = this.findSourceExcerptVariantForQuote(
+      sourceContent,
+      entry.sourceQuote ?? entry.quote,
+      entry.sourceFormat
+    );
+    if (!match) {
+      return null;
+    }
+
+    entry.sourceFormat = match.format;
+    return match.text;
+  }
+
+  private findSourceExcerptVariantForQuote(
+    sourceContent: string,
+    quote: string,
+    preferredFormat?: LeftExcerptFormat
+  ): { text: string; format: LeftExcerptFormat } | null {
     const formats: LeftExcerptFormat[] = ["highlight", "bold", "italic", "none"];
-    const preferred = entry.sourceFormat;
-    const candidates = preferred
-      ? [preferred, ...formats.filter((format) => format !== preferred)]
+    const candidates = preferredFormat
+      ? [preferredFormat, ...formats.filter((format) => format !== preferredFormat)]
       : formats;
 
     for (const format of candidates) {
-      const variant = this.applySourceFormat(entry.quote, format);
+      const variant = this.applySourceFormat(quote, format);
       if (sourceContent.includes(variant)) {
-        entry.sourceFormat = format;
-        return variant;
+        return {
+          text: variant,
+          format,
+        };
       }
     }
 
     return null;
+  }
+
+  private runSourceMutation<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.sourceMutationQueue.then(task, task);
+    this.sourceMutationQueue = next.then(() => undefined, () => undefined);
+    return next;
   }
 }
 
@@ -640,6 +700,7 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
     for (const entry of workbench.entries) {
       entry.kind = entry.kind ?? (entry.quote.trim() ? "excerpt" : "note");
       entry.noteOpen = entry.noteOpen ?? entry.kind === "note";
+      entry.sourceQuote = entry.kind === "excerpt" ? (entry.sourceQuote ?? entry.quote) : undefined;
       entry.sourceFormat = entry.kind === "excerpt" ? entry.sourceFormat : undefined;
     }
   }

@@ -30,6 +30,7 @@ export interface ExcerptEntry {
   id: string;
   kind: "excerpt" | "note";
   quote: string;
+  sourceQuote?: string;
   note: string;
   noteOpen: boolean;
   sourceFormat?: LeftExcerptFormat;
