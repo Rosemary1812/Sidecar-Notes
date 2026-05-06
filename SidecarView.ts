@@ -20,6 +20,8 @@ interface EntryElements {
   noteTextarea: HTMLTextAreaElement | null;
 }
 
+type SortOrder = "asc" | "desc";
+
 export class SidecarView extends ItemView {
   private controller: SidecarViewController | null = null;
   private workbench: WorkbenchData = { entries: [] };
@@ -29,11 +31,17 @@ export class SidecarView extends ItemView {
   private listEl: HTMLElement | null = null;
   private modeButton: HTMLButtonElement | null = null;
   private emptyEl: HTMLElement | null = null;
+  private searchInputEl: HTMLInputElement | null = null;
+  private sortButtonEl: HTMLButtonElement | null = null;
+  private backToTopButtonEl: HTMLButtonElement | null = null;
   private entryEls = new Map<string, EntryElements>();
   private editingQuotes = new Set<string>();
   private editingNotes = new Set<string>();
   private expandedQuotes = new Set<string>();
   private pendingNoteFocusId: string | null = null;
+  private searchQuery = "";
+  private sortOrder: SortOrder = "desc";
+  private onBoundWorkbenchScroll = () => this.updateBackToTopButton();
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -81,9 +89,7 @@ export class SidecarView extends ItemView {
       this.editingNotes.add(entry.id);
       this.pendingNoteFocusId = entry.id;
     }
-    this.appendEntry(entry);
-    this.applyPendingNoteFocus();
-    this.updateEmptyState();
+    this.renderEntryList();
   }
 
   updateExcerptMode(enabled: boolean): void {
@@ -116,6 +122,10 @@ export class SidecarView extends ItemView {
     this.editingNotes.clear();
     this.expandedQuotes.clear();
     this.pendingNoteFocusId = null;
+    this.searchInputEl = null;
+    this.sortButtonEl = null;
+    this.backToTopButtonEl = null;
+    this.getScrollContainer()?.removeEventListener("scroll", this.onBoundWorkbenchScroll);
     return Promise.resolve();
   }
 
@@ -223,26 +233,70 @@ export class SidecarView extends ItemView {
       this.controller?.addNoteEntry();
     });
 
+    const toolbarEl = contentEl.createDiv({ cls: "sidecar-workbench__toolbar" });
+    this.searchInputEl = toolbarEl.createEl("input", {
+      cls: "sidecar-search-input",
+      attr: {
+        type: "search",
+        placeholder: "Search excerpts and notes",
+        "aria-label": "Search excerpts and notes",
+      },
+    });
+    this.searchInputEl.value = this.searchQuery;
+    this.searchInputEl.addEventListener("input", () => {
+      this.syncEditorDrafts();
+      this.searchQuery = this.searchInputEl?.value ?? "";
+      this.renderEntryList();
+    });
+
+    this.sortButtonEl = toolbarEl.createEl("button", {
+      cls: "sidecar-sort-button",
+    });
+    this.sortButtonEl.addEventListener("click", () => {
+      this.syncEditorDrafts();
+      this.sortOrder = this.sortOrder === "desc" ? "asc" : "desc";
+      this.updateSortButton();
+      this.renderEntryList();
+    });
+    this.updateSortButton();
+
     this.emptyEl = contentEl.createDiv({
       cls: "sidecar-workbench__empty",
       text: "Turn on excerpt mode, then select text in the source note.",
     });
 
     this.listEl = contentEl.createDiv({ cls: "sidecar-workbench__list" });
+    this.backToTopButtonEl = contentEl.createEl("button", {
+      cls: "sidecar-back-to-top",
+      attr: {
+        "aria-label": "Back to top",
+        title: "Back to top",
+      },
+    });
+    setIcon(this.backToTopButtonEl, "arrow-up");
+    this.backToTopButtonEl.addEventListener("click", () => {
+      this.getScrollContainer()?.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    });
+    this.registerWorkbenchScrollListener();
     this.renderEntryList();
   }
 
   private renderEntryList(): void {
     if (!this.listEl) return;
+    this.syncEditorDrafts();
     this.listEl.empty();
     this.entryEls.clear();
 
-    for (const entry of this.workbench.entries) {
+    for (const entry of this.getVisibleEntries()) {
       this.appendEntry(entry);
     }
 
     this.updateEmptyState();
     this.applyPendingNoteFocus();
+    this.updateBackToTopButton();
   }
 
   private appendEntry(entry: ExcerptEntry): void {
@@ -275,7 +329,9 @@ export class SidecarView extends ItemView {
   private renderExcerptSection(root: HTMLElement, entry: ExcerptEntry): HTMLTextAreaElement | null {
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--excerpt" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
-    header.createEl("span", { cls: "sidecar-section__label", text: "Excerpt" });
+    const meta = header.createDiv({ cls: "sidecar-section__meta" });
+    meta.createEl("span", { cls: "sidecar-section__label", text: "Excerpt" });
+    this.appendEntryTime(meta, entry);
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
     if (this.editingQuotes.has(entry.id)) {
@@ -354,7 +410,8 @@ export class SidecarView extends ItemView {
 
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--note" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
-    header.createEl("span", { cls: "sidecar-section__label", text: "Note" });
+    const meta = header.createDiv({ cls: "sidecar-section__meta" });
+    meta.createEl("span", { cls: "sidecar-section__label", text: "Note" });
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
     if (this.editingNotes.has(entry.id)) {
@@ -409,7 +466,9 @@ export class SidecarView extends ItemView {
 
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--standalone-note" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
-    header.createEl("span", { cls: "sidecar-section__label", text: "Note" });
+    const meta = header.createDiv({ cls: "sidecar-section__meta" });
+    meta.createEl("span", { cls: "sidecar-section__label", text: "Note" });
+    this.appendEntryTime(meta, entry);
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
     let noteTextarea: HTMLTextAreaElement | null = null;
@@ -489,9 +548,117 @@ export class SidecarView extends ItemView {
     this.modeButton.toggleClass("is-active", this.excerptMode);
   }
 
+  private updateSortButton(): void {
+    if (!this.sortButtonEl) return;
+    this.sortButtonEl.setText(this.sortOrder === "desc" ? "Newest" : "Oldest");
+    this.sortButtonEl.setAttribute(
+      "aria-label",
+      this.sortOrder === "desc" ? "Sort newest first" : "Sort oldest first"
+    );
+  }
+
   private updateEmptyState(): void {
     if (!this.emptyEl) return;
-    this.emptyEl.toggle(this.workbench.entries.length === 0);
+    const hasEntries = this.workbench.entries.length > 0;
+    const hasVisibleEntries = this.getVisibleEntries().length > 0;
+
+    this.emptyEl.setText(
+      hasEntries
+        ? "No matching excerpts or notes."
+        : "Turn on excerpt mode, then select text in the source note."
+    );
+    this.emptyEl.toggle(!hasEntries || !hasVisibleEntries);
+  }
+
+  private registerWorkbenchScrollListener(): void {
+    const container = this.getScrollContainer();
+    if (!container) return;
+
+    container.removeEventListener("scroll", this.onBoundWorkbenchScroll);
+    container.addEventListener("scroll", this.onBoundWorkbenchScroll, { passive: true });
+    this.updateBackToTopButton();
+  }
+
+  private updateBackToTopButton(): void {
+    if (!this.backToTopButtonEl) return;
+    const container = this.getScrollContainer();
+    if (!container) {
+      this.backToTopButtonEl.toggleClass("is-visible", false);
+      return;
+    }
+
+    const canScroll = container.scrollHeight > container.clientHeight + 8;
+    const hasScrolled = container.scrollTop > 24;
+    this.backToTopButtonEl.toggleClass("is-visible", canScroll && hasScrolled);
+  }
+
+  private getVisibleEntries(): ExcerptEntry[] {
+    const query = this.normalizeSearchText(this.searchQuery);
+    const entries = query
+      ? this.workbench.entries.filter((entry) => this.entryMatchesSearch(entry, query))
+      : [...this.workbench.entries];
+
+    return entries.sort((left, right) => {
+      const leftTime = this.getEntryTime(left);
+      const rightTime = this.getEntryTime(right);
+      return this.sortOrder === "desc"
+        ? rightTime - leftTime
+        : leftTime - rightTime;
+    });
+  }
+
+  private entryMatchesSearch(entry: ExcerptEntry, query: string): boolean {
+    const searchable = entry.kind === "excerpt"
+      ? `${entry.quote}\n${entry.note}`
+      : entry.note;
+    return this.normalizeSearchText(searchable).includes(query);
+  }
+
+  private normalizeSearchText(value: string): string {
+    return value.trim().toLocaleLowerCase();
+  }
+
+  private getEntryTime(entry: ExcerptEntry): number {
+    return typeof entry.createdAt === "number" && !Number.isNaN(entry.createdAt)
+      ? entry.createdAt
+      : 0;
+  }
+
+  private appendEntryTime(parent: HTMLElement, entry: ExcerptEntry): void {
+    const timestamp = this.getEntryTime(entry);
+    if (timestamp <= 0) return;
+
+    parent.createEl("span", {
+      cls: "sidecar-entry-time",
+      text: this.formatEntryTime(timestamp),
+    });
+  }
+
+  private formatEntryTime(timestamp: number): string {
+    return new Date(timestamp).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  private syncEditorDrafts(): void {
+    for (const id of this.editingQuotes) {
+      const entry = this.workbench.entries.find((item) => item.id === id);
+      const textarea = this.entryEls.get(id)?.quoteTextarea;
+      if (entry && textarea) {
+        entry.quote = textarea.value;
+      }
+    }
+
+    for (const id of this.editingNotes) {
+      const entry = this.workbench.entries.find((item) => item.id === id);
+      const textarea = this.entryEls.get(id)?.noteTextarea;
+      if (entry && textarea) {
+        entry.note = textarea.value;
+      }
+    }
   }
 
   private openNoteEditor(id: string): void {

@@ -462,6 +462,7 @@ export class DualLinkManager implements SidecarViewController {
       quote,
       sourceQuote: kind === "excerpt" ? quote : undefined,
       sourceStart: kind === "excerpt" ? sourceStart : undefined,
+      createdAt: Date.now(),
       note: "",
       noteOpen: kind === "note",
       sourceFormat: kind === "excerpt" ? this.data.settings.leftExcerptFormat : undefined,
@@ -888,6 +889,7 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
   }
 
   const workbenches = data?.workbenches ?? {};
+  const normalizedAt = Date.now();
   for (const workbench of Object.values(workbenches)) {
     for (const entry of workbench.entries) {
       entry.kind = entry.kind ?? (entry.quote.trim() ? "excerpt" : "note");
@@ -895,6 +897,9 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
       entry.sourceQuote = entry.kind === "excerpt" ? (entry.sourceQuote ?? entry.quote) : undefined;
       entry.sourceFormat = entry.kind === "excerpt" ? entry.sourceFormat : undefined;
       entry.sourceStart = entry.kind === "excerpt" ? entry.sourceStart : undefined;
+      entry.createdAt = typeof entry.createdAt === "number" && !Number.isNaN(entry.createdAt)
+        ? entry.createdAt
+        : normalizedAt;
     }
   }
 

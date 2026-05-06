@@ -37,6 +37,7 @@ export interface ExcerptEntry {
   quote: string;
   sourceQuote?: string;
   sourceStart?: SourcePosition;
+  createdAt?: number;
   note: string;
   noteOpen: boolean;
   sourceFormat?: LeftExcerptFormat;
