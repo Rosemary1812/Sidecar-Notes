@@ -199,6 +199,18 @@
   overflow-wrap: anywhere;
 }
 
+.sidecar-entry__preview--interactive {
+  border-radius: var(--sidecar-radius-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--sidecar-fast),
+    color var(--sidecar-fast);
+}
+
+.sidecar-entry__preview--interactive:hover {
+  background: color-mix(in srgb, var(--background-modifier-hover) 80%, transparent);
+}
+
 .sidecar-entry__preview--collapsed {
   max-height: 168px;
   overflow: hidden;
@@ -311,6 +323,10 @@
   .sidecar-add-note-button,
   .sidecar-expand-button,
   .sidecar-icon-button {
+    transition: none;
+  }
+
+  .sidecar-entry__preview--interactive {
     transition: none;
   }
 }

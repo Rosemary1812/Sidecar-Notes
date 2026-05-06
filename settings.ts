@@ -15,6 +15,11 @@ export type CalloutType =
   | "example";
 export type ExportFormat = "quote" | "callout";
 
+export interface SourcePosition {
+  line: number;
+  ch: number;
+}
+
 export interface SidecarSettings {
   leftExcerptFormat: LeftExcerptFormat;
   autoOpenSidecar: boolean;
@@ -31,6 +36,7 @@ export interface ExcerptEntry {
   kind: "excerpt" | "note";
   quote: string;
   sourceQuote?: string;
+  sourceStart?: SourcePosition;
   note: string;
   noteOpen: boolean;
   sourceFormat?: LeftExcerptFormat;

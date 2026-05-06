@@ -9,6 +9,7 @@ export interface SidecarViewController {
   updateEntry(id: string, patch: Partial<Pick<ExcerptEntry, "quote" | "note">>): void;
   deleteEntry(id: string): Promise<void>;
   deleteNote(id: string): void;
+  jumpToSourceEntry(id: string): void;
   handleWorkbenchClosed(): void;
   setExcerptMode(enabled: boolean): void;
 }
@@ -32,6 +33,7 @@ export class SidecarView extends ItemView {
   private editingQuotes = new Set<string>();
   private editingNotes = new Set<string>();
   private expandedQuotes = new Set<string>();
+  private pendingNoteFocusId: string | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -77,8 +79,10 @@ export class SidecarView extends ItemView {
     }
     if (entry.kind === "note" && !entry.note.trim()) {
       this.editingNotes.add(entry.id);
+      this.pendingNoteFocusId = entry.id;
     }
     this.appendEntry(entry);
+    this.applyPendingNoteFocus();
     this.updateEmptyState();
   }
 
@@ -93,6 +97,9 @@ export class SidecarView extends ItemView {
     this.editingQuotes.delete(id);
     this.editingNotes.delete(id);
     this.expandedQuotes.delete(id);
+    if (this.pendingNoteFocusId === id) {
+      this.pendingNoteFocusId = null;
+    }
     this.workbench.entries = this.workbench.entries.filter((entry) => entry.id !== id);
     this.updateEmptyState();
   }
@@ -108,7 +115,75 @@ export class SidecarView extends ItemView {
     this.editingQuotes.clear();
     this.editingNotes.clear();
     this.expandedQuotes.clear();
+    this.pendingNoteFocusId = null;
     return Promise.resolve();
+  }
+
+  commitPendingNoteEditors(): boolean {
+    if (this.editingNotes.size === 0) return false;
+
+    const removedIds = new Set<string>();
+    const nextEntries: ExcerptEntry[] = [];
+
+    for (const entry of this.workbench.entries) {
+      if (!this.editingNotes.has(entry.id)) {
+        nextEntries.push(entry);
+        continue;
+      }
+
+      const draft = this.entryEls.get(entry.id)?.noteTextarea?.value ?? entry.note;
+      const nextNote = draft.trimEnd();
+      if (entry.kind === "note" && nextNote.trim().length === 0) {
+        removedIds.add(entry.id);
+        continue;
+      }
+
+      entry.note = nextNote;
+      entry.noteOpen = false;
+      nextEntries.push(entry);
+    }
+
+    this.workbench.entries = nextEntries;
+    for (const id of removedIds) {
+      this.entryEls.delete(id);
+    }
+    this.editingNotes.clear();
+    this.pendingNoteFocusId = null;
+    this.renderEntryList();
+    return true;
+  }
+
+  getScrollContainer(): HTMLElement | null {
+    return this.containerEl.querySelector<HTMLElement>(".view-content")
+      ?? this.contentEl.parentElement
+      ?? this.findScrollContainer(this.contentEl);
+  }
+
+  scrollEntryIntoView(id: string, behavior: ScrollBehavior): void {
+    const container = this.getScrollContainer();
+    const entryEl = this.entryEls.get(id)?.root;
+    if (!container || !entryEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const entryRect = entryEl.getBoundingClientRect();
+    const viewTop = containerRect.top;
+    const viewBottom = containerRect.bottom;
+    const targetTopOffset = container.clientHeight * 0.34;
+
+    const fullyVisible =
+      entryRect.top >= viewTop + 12 &&
+      entryRect.bottom <= viewBottom - 12;
+    if (fullyVisible) return;
+
+    const nextTop =
+      container.scrollTop +
+      (entryRect.top - viewTop) -
+      targetTopOffset;
+
+    container.scrollTo({
+      top: Math.max(0, nextTop),
+      behavior,
+    });
   }
 
   private render(): void {
@@ -167,6 +242,7 @@ export class SidecarView extends ItemView {
     }
 
     this.updateEmptyState();
+    this.applyPendingNoteFocus();
   }
 
   private appendEntry(entry: ExcerptEntry): void {
@@ -242,8 +318,11 @@ export class SidecarView extends ItemView {
     const isExpanded = this.expandedQuotes.has(entry.id);
     const preview = section.createDiv({
       cls: isLongQuote && !isExpanded
-        ? "sidecar-entry__preview sidecar-entry__preview--collapsed"
-        : "sidecar-entry__preview",
+        ? "sidecar-entry__preview sidecar-entry__preview--collapsed sidecar-entry__preview--interactive"
+        : "sidecar-entry__preview sidecar-entry__preview--interactive",
+    });
+    preview.addEventListener("click", () => {
+      this.controller?.jumpToSourceEntry(entry.id);
     });
     void this.renderMarkdown(preview, entry.quote);
     if (isLongQuote) {
@@ -268,8 +347,7 @@ export class SidecarView extends ItemView {
         cls: "sidecar-add-note-button",
         text: "+ add note",
       }).addEventListener("click", () => {
-        this.editingNotes.add(entry.id);
-        this.renderEntryList();
+        this.openNoteEditor(entry.id);
       });
       return null;
     }
@@ -308,8 +386,7 @@ export class SidecarView extends ItemView {
 
     const editButton = this.createIconButton(actions, "pencil", "Edit note");
     editButton.addEventListener("click", () => {
-      this.editingNotes.add(entry.id);
-      this.renderEntryList();
+      this.openNoteEditor(entry.id);
     });
     const deleteButton = this.createIconButton(actions, "trash-2", "Delete note");
     deleteButton.addEventListener("click", () => {
@@ -366,8 +443,7 @@ export class SidecarView extends ItemView {
     } else {
       const editButton = this.createIconButton(actions, "pencil", "Edit note");
       editButton.addEventListener("click", () => {
-        this.editingNotes.add(entry.id);
-        this.renderEntryList();
+        this.openNoteEditor(entry.id);
       });
       const deleteButton = this.createIconButton(actions, "trash-2", "Delete note");
       deleteButton.addEventListener("click", () => {
@@ -416,5 +492,39 @@ export class SidecarView extends ItemView {
   private updateEmptyState(): void {
     if (!this.emptyEl) return;
     this.emptyEl.toggle(this.workbench.entries.length === 0);
+  }
+
+  private openNoteEditor(id: string): void {
+    this.editingNotes.add(id);
+    this.pendingNoteFocusId = id;
+    this.renderEntryList();
+  }
+
+  private applyPendingNoteFocus(): void {
+    if (!this.pendingNoteFocusId) return;
+    const elements = this.entryEls.get(this.pendingNoteFocusId);
+    const textarea = elements?.noteTextarea;
+    if (!textarea) return;
+
+    textarea.focus();
+    textarea.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+    this.pendingNoteFocusId = null;
+  }
+
+  private findScrollContainer(start: HTMLElement | null): HTMLElement | null {
+    let current = start;
+    while (current) {
+      const styles = window.getComputedStyle(current);
+      const overflowY = styles.overflowY;
+      if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+        return current;
+      }
+      current = current.parentElement;
+    }
+
+    return null;
   }
 }

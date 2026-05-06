@@ -8,6 +8,7 @@ import {
   LeftExcerptFormat,
   SidecarPluginData,
   SidecarSettings,
+  SourcePosition,
   WorkbenchData,
   createEmptyWorkbench,
 } from "./settings";
@@ -31,6 +32,8 @@ export class DualLinkManager implements SidecarViewController {
   private rightLeaf: WorkspaceLeaf | null = null;
   private view: SidecarView | null = null;
   private leftEditor: Editor | null = null;
+  private leftScrollEl: HTMLElement | null = null;
+  private rightScrollEl: HTMLElement | null = null;
   private saveTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private syncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -40,9 +43,12 @@ export class DualLinkManager implements SidecarViewController {
   private lastCaptureKey: string | null = null;
   private lastCaptureAt = 0;
   private sourceMutationQueue: Promise<void> = Promise.resolve();
+  private ignoreLeftScrollUntil = 0;
+  private activeScrollSyncEntryId: string | null = null;
 
   private onBoundMouseUp = () => this.syncSelection();
   private onBoundKeyUp = () => this.syncSelection();
+  private onBoundLeftScroll = () => this.syncWorkbenchToSourceScroll();
 
   constructor(app: App, data: SidecarPluginData, writeData: DataWriter) {
     this.app = app;
@@ -120,6 +126,7 @@ export class DualLinkManager implements SidecarViewController {
       return;
     }
 
+    this.view?.commitPendingNoteEditors();
     const entry = this.createEntry("", "note");
     entry.noteOpen = true;
     workbench.entries.push(entry);
@@ -154,6 +161,33 @@ export class DualLinkManager implements SidecarViewController {
     entry.note = "";
     entry.noteOpen = false;
     this.queueSave();
+  }
+
+  jumpToSourceEntry(id: string): void {
+    const workbench = this.getCurrentWorkbench();
+    const entry = workbench?.entries.find((item) => item.id === id);
+    if (!entry || entry.kind !== "excerpt") return;
+    if (!this.leftEditor) return;
+
+    const sourceContent = this.leftEditor.getValue();
+    const sourceQuote = entry.sourceQuote ?? entry.quote;
+    const match = this.findSourceExcerptVariantForQuote(
+      sourceContent,
+      sourceQuote,
+      entry.sourceFormat,
+      entry.sourceStart
+    );
+    if (!match) {
+      new Notice("Could not find this excerpt in the source note.");
+      return;
+    }
+
+    entry.sourceFormat = match.format;
+    const from = this.offsetToPosition(sourceContent, match.startOffset);
+    const to = this.offsetToPosition(sourceContent, match.startOffset + match.text.length);
+    entry.sourceStart = from;
+    this.ignoreLeftScrollUntil = Date.now() + 180;
+    this.leftEditor.scrollIntoView({ from, to }, true);
   }
 
   async deleteEntry(id: string): Promise<void> {
@@ -216,8 +250,11 @@ export class DualLinkManager implements SidecarViewController {
     this.rightLeaf = null;
     this.view = null;
     this.leftEditor = null;
+    this.leftScrollEl = null;
+    this.rightScrollEl = null;
     this.lastCaptureKey = null;
     this.lastCaptureAt = 0;
+    this.activeScrollSyncEntryId = null;
     if (options.suspendAutoOpen) {
       this.autoOpenSuspended = true;
     }
@@ -291,6 +328,14 @@ export class DualLinkManager implements SidecarViewController {
     return editorWithDom.containerEl ?? null;
   }
 
+  private getEditorScrollElement(editor: Editor): HTMLElement | null {
+    const editorDom = this.getEditorDom(editor);
+    if (!editorDom) return null;
+    return editorDom.querySelector<HTMLElement>(".cm-scroller")
+      ?? editorDom.querySelector<HTMLElement>(".CodeMirror-scroll")
+      ?? this.findScrollContainer(editorDom);
+  }
+
   private async openWorkbenchLeaf(): Promise<WorkspaceLeaf> {
     const existing = this.app.workspace.getLeavesOfType(SIDECAR_VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf("split", "vertical");
@@ -306,15 +351,20 @@ export class DualLinkManager implements SidecarViewController {
 
     leftDom.addEventListener("mouseup", this.onBoundMouseUp);
     leftDom.addEventListener("keyup", this.onBoundKeyUp);
+    this.leftScrollEl = this.getEditorScrollElement(this.leftEditor);
+    this.rightScrollEl = this.view?.getScrollContainer() ?? null;
+    this.leftScrollEl?.addEventListener("scroll", this.onBoundLeftScroll, { passive: true });
   }
 
   private unregisterListeners(): void {
-    if (!this.leftEditor) return;
-    const leftDom = this.getEditorDom(this.leftEditor);
-    if (!leftDom) return;
-
-    leftDom.removeEventListener("mouseup", this.onBoundMouseUp);
-    leftDom.removeEventListener("keyup", this.onBoundKeyUp);
+    const leftDom = this.leftEditor ? this.getEditorDom(this.leftEditor) : null;
+    if (leftDom) {
+      leftDom.removeEventListener("mouseup", this.onBoundMouseUp);
+      leftDom.removeEventListener("keyup", this.onBoundKeyUp);
+    }
+    this.leftScrollEl?.removeEventListener("scroll", this.onBoundLeftScroll);
+    this.leftScrollEl = null;
+    this.rightScrollEl = null;
   }
 
   private syncSelection(): void {
@@ -329,7 +379,8 @@ export class DualLinkManager implements SidecarViewController {
     if (!workbench) return;
     if (!this.shouldCaptureSelection(trimmed)) return;
 
-    const entry = this.createEntry(trimmed, "excerpt");
+    this.view?.commitPendingNoteEditors();
+    const entry = this.createEntry(trimmed, "excerpt", this.leftEditor.getCursor("from"));
     workbench.entries.push(entry);
     this.view?.addEntry(entry);
     this.queueSave();
@@ -400,12 +451,17 @@ export class DualLinkManager implements SidecarViewController {
     return sourceFile.path;
   }
 
-  private createEntry(quote: string, kind: "excerpt" | "note"): ExcerptEntry {
+  private createEntry(
+    quote: string,
+    kind: "excerpt" | "note",
+    sourceStart?: SourcePosition
+  ): ExcerptEntry {
     return {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       kind,
       quote,
       sourceQuote: kind === "excerpt" ? quote : undefined,
+      sourceStart: kind === "excerpt" ? sourceStart : undefined,
       note: "",
       noteOpen: kind === "note",
       sourceFormat: kind === "excerpt" ? this.data.settings.leftExcerptFormat : undefined,
@@ -596,18 +652,15 @@ export class DualLinkManager implements SidecarViewController {
       let reverted = false;
 
       await this.app.vault.process(sourceFile, (content) => {
-        const formattedQuote = this.findSourceExcerptVariant(content, entry);
+        const match = this.findSourceExcerptMatch(content, entry);
         const sourceQuote = entry.sourceQuote ?? entry.quote;
-        if (!formattedQuote || formattedQuote === sourceQuote) {
-          reverted = formattedQuote === sourceQuote;
+        if (!match || match.text === sourceQuote) {
+          reverted = match?.text === sourceQuote;
           return content;
         }
 
-        const index = content.indexOf(formattedQuote);
-        if (index === -1) return content;
-
         reverted = true;
-        return `${content.slice(0, index)}${sourceQuote}${content.slice(index + formattedQuote.length)}`;
+        return `${content.slice(0, match.startOffset)}${sourceQuote}${content.slice(match.startOffset + match.text.length)}`;
       });
 
       return reverted;
@@ -641,36 +694,53 @@ export class DualLinkManager implements SidecarViewController {
     return this.findSourceExcerptVariant(sourceContent, entry) !== null;
   }
 
-  private findSourceExcerptVariant(sourceContent: string, entry: ExcerptEntry): string | null {
+  private findSourceExcerptMatch(
+    sourceContent: string,
+    entry: ExcerptEntry
+  ): { text: string; format: LeftExcerptFormat; startOffset: number } | null {
     const match = this.findSourceExcerptVariantForQuote(
       sourceContent,
       entry.sourceQuote ?? entry.quote,
-      entry.sourceFormat
+      entry.sourceFormat,
+      entry.sourceStart
     );
     if (!match) {
       return null;
     }
 
     entry.sourceFormat = match.format;
+    entry.sourceStart = this.offsetToPosition(sourceContent, match.startOffset);
+    return match;
+  }
+
+  private findSourceExcerptVariant(sourceContent: string, entry: ExcerptEntry): string | null {
+    const match = this.findSourceExcerptMatch(sourceContent, entry);
+    if (!match) {
+      return null;
+    }
     return match.text;
   }
 
   private findSourceExcerptVariantForQuote(
     sourceContent: string,
     quote: string,
-    preferredFormat?: LeftExcerptFormat
-  ): { text: string; format: LeftExcerptFormat } | null {
+    preferredFormat?: LeftExcerptFormat,
+    sourceStart?: SourcePosition
+  ): { text: string; format: LeftExcerptFormat; startOffset: number } | null {
     const formats: LeftExcerptFormat[] = ["highlight", "bold", "italic", "none"];
     const candidates = preferredFormat
       ? [preferredFormat, ...formats.filter((format) => format !== preferredFormat)]
       : formats;
+    const preferredOffset = sourceStart ? this.positionToOffset(sourceContent, sourceStart) : null;
 
     for (const format of candidates) {
       const variant = this.applySourceFormat(quote, format);
-      if (sourceContent.includes(variant)) {
+      const startOffset = this.findBestExcerptOffset(sourceContent, variant, preferredOffset);
+      if (startOffset !== null) {
         return {
           text: variant,
           format,
+          startOffset,
         };
       }
     }
@@ -682,6 +752,127 @@ export class DualLinkManager implements SidecarViewController {
     const next = this.sourceMutationQueue.then(task, task);
     this.sourceMutationQueue = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  private syncWorkbenchToSourceScroll(): void {
+    if (!this.leftEditor || !this.leftScrollEl || !this.view) return;
+    if (Date.now() < this.ignoreLeftScrollUntil) return;
+
+    this.rightScrollEl = this.view.getScrollContainer() ?? this.rightScrollEl;
+    const targetEntry = this.findPrimaryVisibleExcerptEntry();
+    if (!targetEntry) return;
+    if (targetEntry.id === this.activeScrollSyncEntryId) return;
+
+    const behavior = this.shouldUseSmoothScroll(targetEntry.id) ? "smooth" : "auto";
+    this.activeScrollSyncEntryId = targetEntry.id;
+    this.view.scrollEntryIntoView(targetEntry.id, behavior);
+  }
+
+  private findBestExcerptOffset(
+    sourceContent: string,
+    excerptText: string,
+    preferredOffset: number | null
+  ): number | null {
+    if (!excerptText) return null;
+
+    const matches: number[] = [];
+    let searchFrom = 0;
+    while (searchFrom <= sourceContent.length) {
+      const foundAt = sourceContent.indexOf(excerptText, searchFrom);
+      if (foundAt === -1) break;
+      matches.push(foundAt);
+      searchFrom = foundAt + Math.max(excerptText.length, 1);
+    }
+
+    if (matches.length === 0) return null;
+    if (preferredOffset === null) return matches[0];
+
+    return matches.reduce((best, current) => {
+      const bestDistance = Math.abs(best - preferredOffset);
+      const currentDistance = Math.abs(current - preferredOffset);
+      return currentDistance < bestDistance ? current : best;
+    });
+  }
+
+  private findPrimaryVisibleExcerptEntry(): ExcerptEntry | null {
+    const workbench = this.getCurrentWorkbench();
+    if (!workbench || !this.leftScrollEl || !this.leftEditor) return null;
+
+    const excerptEntries = workbench.entries.filter((entry) => entry.kind === "excerpt");
+    if (excerptEntries.length === 0) return null;
+
+    const lineCount = Math.max(this.leftEditor.lineCount(), 1);
+    const scrollRange = Math.max(this.leftScrollEl.scrollHeight - this.leftScrollEl.clientHeight, 1);
+    const viewportMidRatio =
+      (this.leftScrollEl.scrollTop + this.leftScrollEl.clientHeight * 0.42) / scrollRange;
+    const focusLine = Math.max(
+      0,
+      Math.min(lineCount - 1, Math.round(viewportMidRatio * (lineCount - 1)))
+    );
+
+    return excerptEntries.reduce((best, current) => {
+      const currentLine = current.sourceStart?.line ?? 0;
+      const bestLine = best.sourceStart?.line ?? 0;
+      const currentDistance = Math.abs(currentLine - focusLine);
+      const bestDistance = Math.abs(bestLine - focusLine);
+      return currentDistance < bestDistance ? current : best;
+    });
+  }
+
+  private shouldUseSmoothScroll(nextEntryId: string): boolean {
+    if (!this.rightScrollEl || !this.view) return false;
+    if (!this.activeScrollSyncEntryId) return true;
+
+    const nextElement = this.rightScrollEl.querySelector<HTMLElement>(`[data-entry-id="${nextEntryId}"]`);
+    const currentElement = this.rightScrollEl.querySelector<HTMLElement>(
+      `[data-entry-id="${this.activeScrollSyncEntryId}"]`
+    );
+    if (!nextElement || !currentElement) return true;
+
+    return Math.abs(nextElement.offsetTop - currentElement.offsetTop) < this.rightScrollEl.clientHeight * 1.25;
+  }
+
+  private positionToOffset(content: string, position: SourcePosition): number {
+    const lines = content.split("\n");
+    const maxLine = Math.max(0, Math.min(position.line, lines.length - 1));
+    let offset = 0;
+
+    for (let line = 0; line < maxLine; line += 1) {
+      offset += lines[line].length + 1;
+    }
+
+    return offset + Math.max(0, Math.min(position.ch, lines[maxLine]?.length ?? 0));
+  }
+
+  private offsetToPosition(content: string, offset: number): { line: number; ch: number } {
+    const clamped = Math.max(0, Math.min(offset, content.length));
+    let line = 0;
+    let ch = 0;
+
+    for (let index = 0; index < clamped; index += 1) {
+      if (content[index] === "\n") {
+        line += 1;
+        ch = 0;
+      } else {
+        ch += 1;
+      }
+    }
+
+    return { line, ch };
+  }
+
+  private findScrollContainer(start: HTMLElement | null): HTMLElement | null {
+    let current = start;
+    while (current) {
+      const styles = window.getComputedStyle(current);
+      const overflowY = styles.overflowY;
+      if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+        return current;
+      }
+      current = current.parentElement;
+    }
+
+    return null;
   }
 }
 
@@ -703,6 +894,7 @@ export function normalizePluginData(raw: unknown): SidecarPluginData {
       entry.noteOpen = entry.noteOpen ?? entry.kind === "note";
       entry.sourceQuote = entry.kind === "excerpt" ? (entry.sourceQuote ?? entry.quote) : undefined;
       entry.sourceFormat = entry.kind === "excerpt" ? entry.sourceFormat : undefined;
+      entry.sourceStart = entry.kind === "excerpt" ? entry.sourceStart : undefined;
     }
   }
 
