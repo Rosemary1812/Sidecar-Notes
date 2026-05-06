@@ -590,11 +590,12 @@ export class DualLinkManager implements SidecarViewController {
 
   private async revertExcerptMarkupInSource(entry: ExcerptEntry): Promise<boolean> {
     if (!this.sourceFile || entry.kind !== "excerpt") return false;
+    const sourceFile = this.sourceFile;
 
     return this.runSourceMutation(async () => {
       let reverted = false;
 
-      await this.app.vault.process(this.sourceFile as TFile, (content) => {
+      await this.app.vault.process(sourceFile, (content) => {
         const formattedQuote = this.findSourceExcerptVariant(content, entry);
         const sourceQuote = entry.sourceQuote ?? entry.quote;
         if (!formattedQuote || formattedQuote === sourceQuote) {

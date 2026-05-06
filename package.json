@@ -1,6 +1,6 @@
 {
   "name": "sidecar-notes",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "A sidecar note workflow with split view, synced quotes, and companion note files.",
   "main": "main.js",
   "scripts": {
