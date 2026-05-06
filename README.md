@@ -29,7 +29,7 @@ Sidecar Notes is built for a simple loop:
 3. Keep `Excerpt mode: On` in the right-side workbench.
 4. Select text in the source note.
 5. The selected text is captured as an excerpt card on the right.
-6. Add notes to any excerpt, or create standalone notes.
+6. Search, sort, annotate, or click an excerpt card to return to the source text.
 7. Click `Sync` when you want to update the exported Markdown note immediately.
 
 ## What It Does
@@ -37,6 +37,9 @@ Sidecar Notes is built for a simple loop:
 - Keeps reading and excerpting in a split workflow instead of forcing everything into one editor.
 - Captures selected text into a right-side excerpt workbench.
 - Lets you choose how the source text is marked: `highlight`, `bold`, `italic`, or `none`.
+- Lets you search excerpts and notes in the current workbench.
+- Shows capture time for excerpt and note cards, with newest/oldest sorting.
+- Lets you click an excerpt card to jump back to the matching source text.
 - Supports notes attached to each excerpt.
 - Supports standalone notes that are not tied to a quote.
 - Renders excerpt content and notes as Markdown.
@@ -62,7 +65,7 @@ Sidecar Notes is built for a simple loop:
 - `Export callout style`
   Chooses the Obsidian callout type when callout export is enabled.
 - `Summary folder`
-  Sets the folder where exported Markdown notes are created.
+  Sets the folder where exported Markdown notes are created. Use `/` for nested folders, such as `Sidecar Exports/Books`.
 
 ## Exported Note
 
