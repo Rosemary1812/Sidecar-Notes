@@ -89,6 +89,7 @@ export class SidecarSettingTab extends PluginSettingTab {
             await this.plugin.manager?.updateSettings({
               exportFormat: value as ExportFormat,
             });
+            this.display();
           });
       });
 
@@ -111,6 +112,7 @@ export class SidecarSettingTab extends PluginSettingTab {
           .addOption("bug", "Bug")
           .addOption("example", "Example")
           .setValue(settings.exportCalloutType)
+          .setDisabled(settings.exportFormat !== "callout")
           .onChange(async (value) => {
             await this.plugin.manager?.updateSettings({
               exportCalloutType: value as CalloutType,
@@ -120,9 +122,9 @@ export class SidecarSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Summary folder")
-      .setDesc("Folder where Markdown summary files are created and updated.")
+      .setDesc("Folder path where Markdown summary files are created. Use / for nested folders.")
       .addText((text) => {
-        text.setPlaceholder("Sidecar exports")
+        text.setPlaceholder("Sidecar Exports/Books")
           .setValue(settings.exportFolder)
           .onChange(async (value) => {
             await this.plugin.manager?.updateSettings({ exportFolder: value });
