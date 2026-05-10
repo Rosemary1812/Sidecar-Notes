@@ -25,6 +25,7 @@ export default defineConfig([
       },
       globals: {
         console: "readonly",
+        window: "readonly",
       },
     },
   },

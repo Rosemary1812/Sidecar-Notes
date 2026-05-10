@@ -124,7 +124,7 @@ export class SidecarSettingTab extends PluginSettingTab {
       .setName("Summary folder")
       .setDesc("Folder path where Markdown summary files are created. Use / for nested folders.")
       .addText((text) => {
-        text.setPlaceholder("Sidecar Exports/Books")
+        text.setPlaceholder("Sidecar exports/books")
           .setValue(settings.exportFolder)
           .onChange(async (value) => {
             await this.plugin.manager?.updateSettings({ exportFolder: value });
