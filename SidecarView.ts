@@ -206,7 +206,7 @@ export class SidecarView extends ItemView {
 
     const headerEl = contentEl.createDiv({ cls: "sidecar-workbench__header" });
     const titleGroup = headerEl.createDiv({ cls: "sidecar-workbench__title-group" });
-    titleGroup.createEl("span", { cls: "sidecar-workbench__eyebrow", text: "Excerpt workbench" });
+    titleGroup.createSpan({ cls: "sidecar-workbench__eyebrow", text: "Excerpt workbench" });
     titleGroup.createEl("h2", { text: this.title });
 
     const actionsEl = headerEl.createDiv({ cls: "sidecar-workbench__actions" });
@@ -330,7 +330,7 @@ export class SidecarView extends ItemView {
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--excerpt" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
     const meta = header.createDiv({ cls: "sidecar-section__meta" });
-    meta.createEl("span", { cls: "sidecar-section__label", text: "Excerpt" });
+    meta.createSpan({ cls: "sidecar-section__label", text: "Excerpt" });
     this.appendEntryTime(meta, entry);
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
@@ -411,7 +411,7 @@ export class SidecarView extends ItemView {
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--note" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
     const meta = header.createDiv({ cls: "sidecar-section__meta" });
-    meta.createEl("span", { cls: "sidecar-section__label", text: "Note" });
+    meta.createSpan({ cls: "sidecar-section__label", text: "Note" });
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
     if (this.editingNotes.has(entry.id)) {
@@ -467,7 +467,7 @@ export class SidecarView extends ItemView {
     const section = root.createDiv({ cls: "sidecar-section sidecar-section--standalone-note" });
     const header = section.createDiv({ cls: "sidecar-section__header" });
     const meta = header.createDiv({ cls: "sidecar-section__meta" });
-    meta.createEl("span", { cls: "sidecar-section__label", text: "Note" });
+    meta.createSpan({ cls: "sidecar-section__label", text: "Note" });
     this.appendEntryTime(meta, entry);
     const actions = header.createDiv({ cls: "sidecar-icon-actions" });
 
@@ -628,7 +628,7 @@ export class SidecarView extends ItemView {
     const timestamp = this.getEntryTime(entry);
     if (timestamp <= 0) return;
 
-    parent.createEl("span", {
+    parent.createSpan({
       cls: "sidecar-entry-time",
       text: this.formatEntryTime(timestamp),
     });

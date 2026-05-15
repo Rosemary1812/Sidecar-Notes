@@ -1,3 +1,4 @@
+/* global activeDocument */
 import { App, Editor, MarkdownView, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import { SIDECAR_VIEW_TYPE, SidecarView, SidecarViewController } from "./SidecarView";
 import {
@@ -34,9 +35,9 @@ export class DualLinkManager implements SidecarViewController {
   private leftEditor: Editor | null = null;
   private leftScrollEl: HTMLElement | null = null;
   private rightScrollEl: HTMLElement | null = null;
-  private saveTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private syncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private reconcileTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private saveTimer: number | null = null;
+  private syncTimer: number | null = null;
+  private reconcileTimer: number | null = null;
   private excerptMode = true;
   private isClosingLeaf = false;
   private autoOpenSuspended = false;
@@ -66,6 +67,10 @@ export class DualLinkManager implements SidecarViewController {
 
   getSettings(): SidecarSettings {
     return this.data.settings;
+  }
+
+  private getTimerWindow(): Window {
+    return activeDocument.defaultView as Window;
   }
 
   async updateSettings(patch: Partial<SidecarSettings>): Promise<void> {
@@ -214,10 +219,10 @@ export class DualLinkManager implements SidecarViewController {
     if (!this.sourceFile || file.path !== this.sourceFile.path) return;
 
     if (this.reconcileTimer !== null) {
-      globalThis.clearTimeout(this.reconcileTimer);
+      this.getTimerWindow().clearTimeout(this.reconcileTimer);
     }
 
-    this.reconcileTimer = globalThis.setTimeout(() => {
+    this.reconcileTimer = this.getTimerWindow().setTimeout(() => {
       this.reconcileTimer = null;
       void this.reconcileWorkbenchWithSource();
     }, 250);
@@ -471,10 +476,10 @@ export class DualLinkManager implements SidecarViewController {
 
   private queueSave(): void {
     if (this.saveTimer !== null) {
-      globalThis.clearTimeout(this.saveTimer);
+      this.getTimerWindow().clearTimeout(this.saveTimer);
     }
 
-    this.saveTimer = globalThis.setTimeout(() => {
+    this.saveTimer = this.getTimerWindow().setTimeout(() => {
       void this.saveNow();
     }, 300);
     this.queueSummarySync();
@@ -482,14 +487,14 @@ export class DualLinkManager implements SidecarViewController {
 
   private flushQueuedSave(): void {
     if (this.saveTimer === null) return;
-    globalThis.clearTimeout(this.saveTimer);
+    this.getTimerWindow().clearTimeout(this.saveTimer);
     this.saveTimer = null;
     void this.saveNow();
   }
 
   private async saveNow(): Promise<void> {
     if (this.saveTimer !== null) {
-      globalThis.clearTimeout(this.saveTimer);
+      this.getTimerWindow().clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
     await this.writeData(this.data);
@@ -498,24 +503,24 @@ export class DualLinkManager implements SidecarViewController {
   private queueSummarySync(): void {
     if (!this.sourceFile || !this.data.settings.autoSaveSummaryFile) return;
     if (this.syncTimer !== null) {
-      globalThis.clearTimeout(this.syncTimer);
+      this.getTimerWindow().clearTimeout(this.syncTimer);
     }
 
-    this.syncTimer = globalThis.setTimeout(() => {
+    this.syncTimer = this.getTimerWindow().setTimeout(() => {
       void this.syncSummaryFile();
     }, 500);
   }
 
   private flushQueuedSync(): void {
     if (this.syncTimer === null) return;
-    globalThis.clearTimeout(this.syncTimer);
+    this.getTimerWindow().clearTimeout(this.syncTimer);
     this.syncTimer = null;
     void this.syncSummaryFile();
   }
 
   private flushQueuedReconcile(): void {
     if (this.reconcileTimer === null) return;
-    globalThis.clearTimeout(this.reconcileTimer);
+    this.getTimerWindow().clearTimeout(this.reconcileTimer);
     this.reconcileTimer = null;
   }
 
@@ -545,12 +550,12 @@ export class DualLinkManager implements SidecarViewController {
     }
 
     if (this.syncTimer !== null) {
-      globalThis.clearTimeout(this.syncTimer);
+      this.getTimerWindow().clearTimeout(this.syncTimer);
       this.syncTimer = null;
     }
 
     const path = await this.ensureSummaryPath(workbench, this.sourceFile);
-    const content = this.renderSummaryFile(workbench, this.sourceFile, path);
+    const content = this.renderSummaryFile(workbench, this.sourceFile);
     await this.writeMarkdownFile(path, content);
 
     if (this.data.settings.addBidirectionalLinks) {
@@ -561,7 +566,7 @@ export class DualLinkManager implements SidecarViewController {
     return path;
   }
 
-  private renderSummaryFile(workbench: WorkbenchData, sourceFile: TFile, summaryPath: string): string {
+  private renderSummaryFile(workbench: WorkbenchData, sourceFile: TFile): string {
     const body = this.renderExport(workbench).trim();
     const sourceLink = this.data.settings.addBidirectionalLinks
       ? `Source: ${this.wikilinkForFile(sourceFile.path, sourceFile.basename)}\n\n`
