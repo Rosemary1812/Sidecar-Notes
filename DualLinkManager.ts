@@ -1,4 +1,3 @@
-/* global activeDocument */
 import { App, Editor, MarkdownView, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import { SIDECAR_VIEW_TYPE, SidecarView, SidecarViewController } from "./SidecarView";
 import {

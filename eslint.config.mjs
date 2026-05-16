@@ -24,6 +24,7 @@ export default defineConfig([
         project: "./tsconfig.json",
       },
       globals: {
+        activeDocument: "readonly",
         console: "readonly",
         window: "readonly",
       },
